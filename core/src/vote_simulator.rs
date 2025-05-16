@@ -110,7 +110,7 @@ impl VoteSimulator {
                             solana_vote_program::vote_state::Vote::new(
                                 vec![parent],
                                 parent_bank.hash(),
-                            ),
+                            )
                         )
                         .unwrap();
                         TowerSync::new(
@@ -205,6 +205,7 @@ impl VoteSimulator {
 
         // Try to vote on the given slot
         let descendants = self.bank_forks.read().unwrap().descendants();
+        let mut last_logged_vote_slot = 0;
         let SelectVoteAndResetForkResult {
             heaviest_fork_failures,
             ..
@@ -217,6 +218,7 @@ impl VoteSimulator {
             tower,
             &self.latest_validator_votes_for_frozen_banks,
             &self.heaviest_subtree_fork_choice,
+            &mut last_logged_vote_slot,
         );
 
         // Make sure this slot isn't locked out or failing threshold
@@ -225,7 +227,7 @@ impl VoteSimulator {
             return heaviest_fork_failures;
         }
 
-        let new_root = tower.record_bank_vote(&vote_bank);
+        let new_root = tower.record_bank_vote(&vote_bank, true);
         if let Some(new_root) = new_root {
             self.set_root(new_root);
         }

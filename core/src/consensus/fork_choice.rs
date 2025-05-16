@@ -93,10 +93,10 @@ fn last_vote_able_to_land(
     // don't need to super refresh:
     // 1. Last vote has landed
     my_latest_landed_vote_slot >= last_voted_slot
-    // 2. Already voting at the tip
-            || last_voted_slot >= heaviest_bank_on_same_voted_fork.slot()
-    // 3. Last vote is within slot hashes, regular refresh is enough
-            || heaviest_bank_on_same_voted_fork
+        // 2. Already voting at the tip
+        || last_voted_slot >= heaviest_bank_on_same_voted_fork.slot()
+        // 3. Last vote is within slot hashes, regular refresh is enough
+        || heaviest_bank_on_same_voted_fork
         .is_in_slot_hashes_history(&last_voted_slot)
 }
 
@@ -322,6 +322,7 @@ fn can_vote_on_candidate_bank(
     tower: &Tower,
     failure_reasons: &mut Vec<HeaviestForkFailures>,
     switch_fork_decision: &SwitchForkDecision,
+    last_logged_vote_slot: &mut Slot,
 ) -> bool {
     let (
         is_locked_out,
@@ -375,8 +376,8 @@ fn can_vote_on_candidate_bank(
     // dumped and should exist in progress map.
     let propagation_confirmed = is_leader_slot
         || progress
-            .get_leader_propagation_slot_must_exist(candidate_vote_bank_slot)
-            .0;
+        .get_leader_propagation_slot_must_exist(candidate_vote_bank_slot)
+        .0;
     if !propagation_confirmed {
         failure_reasons.push(HeaviestForkFailures::NoPropagatedConfirmation(
             candidate_vote_bank_slot,
@@ -390,11 +391,14 @@ fn can_vote_on_candidate_bank(
         && propagation_confirmed
         && switch_fork_decision.can_vote()
     {
-        info!(
-            "voting: {} {:.1}%",
-            candidate_vote_bank_slot,
-            100.0 * fork_weight
-        );
+        if candidate_vote_bank_slot != *last_logged_vote_slot {
+            info!(
+                "voting: {} {:.1}%",
+                candidate_vote_bank_slot,
+                100.0 * fork_weight
+            );
+            *last_logged_vote_slot = candidate_vote_bank_slot;
+        }
         true
     } else {
         false
@@ -423,6 +427,7 @@ pub fn select_vote_and_reset_forks(
     tower: &mut Tower,
     latest_validator_votes_for_frozen_banks: &LatestValidatorVotesForFrozenBanks,
     fork_choice: &HeaviestSubtreeForkChoice,
+    last_logged_vote_slot: &mut Slot,
 ) -> SelectVoteAndResetForkResult {
     // Try to vote on the actual heaviest fork. If the heaviest bank is
     // locked out or fails the threshold check, the validator will:
@@ -479,6 +484,7 @@ pub fn select_vote_and_reset_forks(
         tower,
         &mut failure_reasons,
         &switch_fork_decision,
+        last_logged_vote_slot,
     ) {
         // We can vote!
         SelectVoteAndResetForkResult {
