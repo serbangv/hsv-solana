@@ -9,7 +9,7 @@ use {
     log::*,
     solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
     solana_clap_utils::{
-        input_parsers::{pubkey_of, pubkeys_of, value_of},
+        input_parsers::{pubkey_of, pubkeys_of, value_of, keypair_of},
         input_validators::normalize_to_url_if_moniker,
     },
     solana_core::consensus::tower_storage::FileTowerStorage,
@@ -353,6 +353,17 @@ fn main() {
         exit(1);
     });
 
+    let hsv_identity_keypair = keypair_of(&matches, "hsv_identity");
+    let hsv_identity_keypair = hsv_identity_keypair.map(Arc::new);
+
+    let hsv_vote_account: Option<Pubkey> = pubkey_of(&matches, "hsv_vote_account");
+    let hsv_vote_account = hsv_vote_account.map(Arc::new);
+
+    let hsv_send_to: Option<String> = value_of(&matches, "hsv_send_to");
+    let hsv_send_to = hsv_send_to.map(Arc::new);
+
+    let hsv_port: Option<u16> = value_of(&matches, "faucet_port");
+
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
 
     if TestValidatorGenesis::ledger_exists(&ledger_path) {
@@ -575,6 +586,10 @@ fn main() {
         mint_address,
         socket_addr_space,
         rpc_to_plugin_manager_receiver,
+        hsv_identity_keypair,
+        hsv_vote_account,
+        hsv_send_to,
+        hsv_port
     ) {
         Ok(test_validator) => {
             if let Some(dashboard) = dashboard {

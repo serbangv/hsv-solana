@@ -1507,6 +1507,17 @@ pub fn main() {
 
     let identity_keypair = Arc::new(identity_keypair);
 
+    let hsv_identity_keypair = keypair_of(&matches, "hsv-identity");
+    let hsv_identity_keypair = hsv_identity_keypair.map(Arc::new);
+
+    let hsv_vote_account: Option<Pubkey> = pubkey_of(&matches, "hsv_vote_account");
+    let hsv_vote_account = hsv_vote_account.map(Arc::new);
+
+    let hsv_send_to: Option<String> = value_of(&matches, "hsv_send_to");
+    let hsv_send_to = hsv_send_to.map(Arc::new);
+
+    let hsv_port: Option<u16> = value_of(&matches, "faucet_port");
+
     let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
@@ -1593,6 +1604,10 @@ pub fn main() {
         },
         admin_service_post_init,
         Some(runtime_plugin_config_and_rpc_rx),
+        hsv_identity_keypair,
+        hsv_vote_account,
+        hsv_send_to,
+        hsv_port
     ) {
         Ok(validator) => validator,
         Err(err) => match err.downcast_ref() {

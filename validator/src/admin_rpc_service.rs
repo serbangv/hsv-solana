@@ -1538,6 +1538,7 @@ mod tests {
                 ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                 post_init,
                 None,
+                None,
             )
             .expect("assume successful validator start");
             assert_eq!(

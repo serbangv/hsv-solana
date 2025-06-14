@@ -1783,6 +1783,38 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .multiple(true)
                 .help("Specify the configuration file for a Runtime plugin.")
         )
+        .arg(
+            Arg::with_name("hsv_identity")
+                .long("hsv-identity")
+                .value_name("KEYPAIR")
+                .takes_value(true)
+                .validator(is_keypair_or_ask_keyword)
+                .help("Hot Swap Vote identity keypair"),
+        )
+        .arg(
+            Arg::with_name("hsv_vote_account")
+                .long("hsv-vote-account")
+                .value_name("PUBKEY")
+                .validator(is_pubkey)
+                .takes_value(true)
+                .help("Hot Swap Vote vote account pubkey"),
+        )
+        .arg(
+            Arg::with_name("hsv_send_to")
+                .long("hsv-send-to")
+                .value_name("HOST:PORT")
+                .validator(solana_net_utils::is_host_port)
+                .takes_value(true)
+                .help("Hot Swap Vote main validator ip:port"),
+        )
+        .arg(
+            Arg::with_name("hsv_listen_port")
+                .long("hsv-listen-port")
+                .value_name("PORT")
+                .takes_value(true)
+                .validator(port_validator)
+                .help("Hot Swap Vote port where main validator listens for incoming txs"),
+        )
         .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")
@@ -2795,6 +2827,38 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      argument in the genesis configuration. If the ledger \
                      already exists then this parameter is silently ignored",
                 ),
+        )
+        .arg(
+            Arg::with_name("hsv_identity")
+                .long("hsv-identity")
+                .value_name("KEYPAIR")
+                .takes_value(true)
+                .validator(is_keypair_or_ask_keyword)
+                .help("Hot Swap Vote identity keypair"),
+        )
+        .arg(
+            Arg::with_name("hsv_vote_account")
+                .long("hsv-vote-account")
+                .value_name("PUBKEY")
+                .validator(is_pubkey)
+                .takes_value(true)
+                .help("Hot Swap Vote vote account pubkey"),
+        )
+        .arg(
+            Arg::with_name("hsv_send_to")
+                .long("hsv-send-to")
+                .value_name("HOST:PORT")
+                .validator(solana_net_utils::is_host_port)
+                .takes_value(true)
+                .help("Hot Swap Vote main validator ip:port"),
+        )
+        .arg(
+            Arg::with_name("hsv_listen_port")
+                .long("hsv-listen-port")
+                .value_name("PORT")
+                .takes_value(true)
+                .validator(port_validator)
+                .help("Hot Swap Vote port where main validator listens for incoming txs"),
         )
 }
 

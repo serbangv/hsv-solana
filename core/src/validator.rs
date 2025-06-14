@@ -631,7 +631,12 @@ impl Validator {
             Vec<PathBuf>,
             Receiver<RuntimePluginManagerRpcRequest>,
         )>,
+        hsv_identity_keypair: Option<Arc<Keypair>>,
+        hsv_vote_account: Option<Arc<Pubkey>>,
+        hsv_send_to: Option<Arc<String>>,
+        hsv_port: Option<u16>
     ) -> Result<Self> {
+
         let ValidatorTpuConfig {
             use_quic,
             vote_use_quic,
@@ -1567,6 +1572,10 @@ impl Validator {
             slot_status_notifier,
             vote_connection_cache,
             config.shred_retransmit_receiver_address.clone(),
+            hsv_identity_keypair,
+            hsv_vote_account,
+            hsv_send_to,
+            hsv_port
         )
         .map_err(ValidatorError::Other)?;
 
@@ -2881,6 +2890,7 @@ mod tests {
             ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
             None,
+            None,
         )
         .expect("assume successful validator start");
         assert_eq!(
@@ -3097,6 +3107,7 @@ mod tests {
                     SocketAddrSpace::Unspecified,
                     ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                     Arc::new(RwLock::new(None)),
+                    None,
                     None,
                 )
                 .expect("assume successful validator start")

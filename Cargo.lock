@@ -7644,6 +7644,7 @@ dependencies = [
  "lru",
  "min-max-heap",
  "num_enum",
+ "once_cell",
  "prio-graph",
  "prost",
  "prost-types",

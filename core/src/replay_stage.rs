@@ -16,7 +16,7 @@ use {
             progress_map::{ForkProgress, ProgressMap, PropagatedStats},
             tower_storage::{SavedTower, SavedTowerVersions, TowerStorage},
             tower_vote_state::TowerVoteState,
-            BlockhashStatus, ComputedBankState, Stake, SwitchForkDecision, Tower, TowerError,
+            ComputedBankState, Stake, SwitchForkDecision, Tower, TowerError,
             VotedStakes, SWITCH_FORK_THRESHOLD,
         },
         cost_update_service::CostUpdate,
@@ -29,10 +29,11 @@ use {
             },
         },
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
-        voting_service::VoteOp,
+        voting_service::{VoteOp, VoteOpWithAncestors},
         window_service::DuplicateSlotReceiver,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    once_cell::sync::Lazy,
     rayon::{prelude::*, ThreadPool},
     solana_accounts_db::contains::Contains,
     solana_entry::entry::VerifyRecyclers,
@@ -82,6 +83,7 @@ use {
         collections::{HashMap, HashSet},
         num::NonZeroUsize,
         result,
+        net::UdpSocket,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
@@ -91,6 +93,10 @@ use {
     },
 };
 
+static SEND_SOCKET: Lazy<UdpSocket> = Lazy::new(|| {
+    UdpSocket::bind("0.0.0.0:0").expect("hot_spare_vote: Failed to bind UDP socket")
+});
+
 pub const MAX_ENTRY_RECV_PER_ITER: usize = 512;
 pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
 pub const MAX_UNCONFIRMED_SLOTS: usize = 5;
@@ -98,13 +104,15 @@ pub const DUPLICATE_LIVENESS_THRESHOLD: f64 = 0.1;
 pub const DUPLICATE_THRESHOLD: f64 = 1.0 - SWITCH_FORK_THRESHOLD - DUPLICATE_LIVENESS_THRESHOLD;
 
 const MAX_VOTE_SIGNATURES: usize = 200;
-const MAX_VOTE_REFRESH_INTERVAL_MILLIS: usize = 5000;
+// Suspended refresh_last_vote logic
+// const MAX_VOTE_REFRESH_INTERVAL_MILLIS: usize = 5000;
 const MAX_REPAIR_RETRY_LOOP_ATTEMPTS: usize = 10;
 
 #[cfg(test)]
 static_assertions::const_assert!(REFRESH_VOTE_BLOCKHEIGHT < solana_sdk::clock::MAX_PROCESSING_AGE);
 // Give at least 4 leaders the chance to pack our vote
-const REFRESH_VOTE_BLOCKHEIGHT: usize = 16;
+// Suspended refresh_last_vote logic
+// const REFRESH_VOTE_BLOCKHEIGHT: usize = 16;
 #[derive(PartialEq, Eq, Debug)]
 pub enum HeaviestForkFailures {
     LockedOut(u64),
@@ -148,9 +156,10 @@ impl GenerateVoteTxResult {
         matches!(self, Self::NonVoting)
     }
 
-    fn is_hot_spare(&self) -> bool {
-        matches!(self, Self::HotSpare)
-    }
+    // Suspended refresh_last_vote logic
+    // fn is_hot_spare(&self) -> bool {
+    //     matches!(self, Self::HotSpare)
+    // }
 }
 
 // Implement a destructor for the ReplayStage thread to signal it exited
@@ -178,10 +187,12 @@ struct ReplaySlotFromBlockstore {
     replay_result: Option<Result<usize /* tx count */, BlockstoreProcessorError>>,
 }
 
-struct LastVoteRefreshTime {
-    last_refresh_time: Instant,
-    last_print_time: Instant,
-}
+
+// Suspended refresh_last_vote logic
+// struct LastVoteRefreshTime {
+//     last_refresh_time: Instant,
+//     last_print_time: Instant,
+// }
 
 #[derive(Default)]
 struct SkippedSlotsInfo {
@@ -275,6 +286,9 @@ pub struct ReplayStageConfig {
     pub log_messages_bytes_limit: Option<usize>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub banking_tracer: Arc<BankingTracer>,
+    pub hsv_identity_keypair: Option<Arc<Keypair>>,
+    pub hsv_vote_account: Option<Arc<Pubkey>>,
+    pub hsv_send_to: Option<Arc<String>>
 }
 
 pub struct ReplaySenders {
@@ -290,7 +304,7 @@ pub struct ReplaySenders {
     pub replay_vote_sender: ReplayVoteSender,
     pub cluster_slots_update_sender: Sender<Vec<u64>>,
     pub cost_update_sender: Sender<CostUpdate>,
-    pub voting_sender: Sender<VoteOp>,
+    pub voting_sender: Sender<VoteOpWithAncestors>,
     pub drop_bank_sender: Sender<Vec<BankWithScheduler>>,
     pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
@@ -566,6 +580,9 @@ impl ReplayStage {
             log_messages_bytes_limit,
             prioritization_fee_cache,
             banking_tracer,
+            hsv_identity_keypair,
+            hsv_vote_account,
+            hsv_send_to
         } = config;
 
         let ReplaySenders {
@@ -660,10 +677,7 @@ impl ReplayStage {
                 LatestValidatorVotesForFrozenBanks::default();
             let mut voted_signatures = Vec::new();
             let mut has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
-            let mut last_vote_refresh_time = LastVoteRefreshTime {
-                last_refresh_time: Instant::now(),
-                last_print_time: Instant::now(),
-            };
+
             let (working_bank, in_vote_only_mode) = {
                 let r_bank_forks = bank_forks.read().unwrap();
                 (
@@ -946,22 +960,6 @@ impl ReplayStage {
                 );
                 select_vote_and_reset_forks_time.stop();
 
-                if vote_bank.is_none() {
-                    Self::maybe_refresh_last_vote(
-                        &mut tower,
-                        &progress,
-                        heaviest_bank_on_same_voted_fork,
-                        &vote_account,
-                        &identity_keypair,
-                        &authorized_voter_keypairs.read().unwrap(),
-                        &mut voted_signatures,
-                        has_new_vote_been_rooted,
-                        &mut last_vote_refresh_time,
-                        &voting_sender,
-                        wait_to_vote_slot,
-                    );
-                }
-
                 let mut heaviest_fork_failures_time = Measure::start("heaviest_fork_failures_time");
                 if tower.is_recent(heaviest_bank.slot()) && !heaviest_fork_failures.is_empty() {
                     Self::log_heaviest_fork_failures(
@@ -1201,6 +1199,9 @@ impl ReplayStage {
                             &drop_bank_sender,
                             wait_to_vote_slot,
                             pop_expired,
+                            &hsv_identity_keypair,
+                            &hsv_vote_account,
+                            &hsv_send_to
                         );
                     }
                 }
@@ -2622,11 +2623,14 @@ impl ReplayStage {
         vote_signatures: &mut Vec<Signature>,
         has_new_vote_been_rooted: &mut bool,
         replay_timing: &mut ReplayLoopTiming,
-        voting_sender: &Sender<VoteOp>,
+        voting_sender: &Sender<VoteOpWithAncestors>,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
         drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
         wait_to_vote_slot: Option<Slot>,
         pop_expired: bool,
+        hsv_identity_keypair: &Option<Arc<Keypair>>,
+        hsv_vote_account: &Option<Arc<Pubkey>>,
+        hsv_send_to: &Option<Arc<String>>
     ) -> Result<(), SetRootError> {
         assert!(!banks.is_empty());
 
@@ -2728,8 +2732,15 @@ impl ReplayStage {
 
         info!("voting for window: {:?}", new_slots);
 
+        let bank = banks.last().unwrap();
+        let ancestors = {
+            let r_bank_forks = bank_forks.read().unwrap();
+            r_bank_forks.ancestors()
+        };
+        let bank_ancestors = ancestors.get(&bank.slot()).unwrap();
+
         Self::push_vote(
-            banks.last().unwrap(),
+            bank,
             vote_account_pubkey,
             identity_keypair,
             authorized_voter_keypairs,
@@ -2740,6 +2751,11 @@ impl ReplayStage {
             replay_timing,
             voting_sender,
             wait_to_vote_slot,
+            bank_ancestors,
+            leader_schedule_cache,
+            hsv_identity_keypair,
+            hsv_vote_account,
+            hsv_send_to
         );
         Ok(())
     }
@@ -2799,7 +2815,9 @@ impl ReplayStage {
 
         let authorized_voter_keypair = match authorized_voter_keypairs
             .iter()
-            .find(|keypair| keypair.pubkey() == authorized_voter_pubkey)
+            .find(|keypair| {
+                keypair.pubkey() == authorized_voter_pubkey
+            })
         {
             None => {
                 warn!(
@@ -2845,188 +2863,10 @@ impl ReplayStage {
         GenerateVoteTxResult::Tx(vote_tx)
     }
 
-    /// Potentially refresh the last vote if:
-    /// - We are not a hotspare or non-voting validator and we have previously attempted to vote at least once
-    /// - There is a `heaviest_bank_on_same_fork` on the previously voted fork
-    /// - We have previously landed a vote on this fork for a slot `latest_landed_vote_slot`
-    /// - Our latest vote attempt for `last_vote_slot` has not been cleared from the progress map
-    /// - `latest_landed_vote_slot` < `last_vote_slot`
-    /// - The difference in block height of `heaviest_bank_on_same_fork` and `last_vote_slot`
-    ///   is at least `REFRESH_VOTE_BLOCKHEIGHT` as indicated by the blockhash queue
-    /// - It has been at least `MAX_VOTE_REFRESH_INTERVAL_MILLIS` ms since our last refresh
-    ///
-    /// If the conditions are met, we update the timestamp and blockhash of our original vote
-    /// for `last_vote_slot` and resend it to the cluster
-    ///
-    /// Returns true if the last vote was refreshed
-    #[allow(clippy::too_many_arguments)]
-    fn maybe_refresh_last_vote(
-        tower: &mut Tower,
-        progress: &ProgressMap,
-        heaviest_bank_on_same_fork: Option<Arc<Bank>>,
-        vote_account_pubkey: &Pubkey,
-        identity_keypair: &Keypair,
-        authorized_voter_keypairs: &[Arc<Keypair>],
-        vote_signatures: &mut Vec<Signature>,
-        has_new_vote_been_rooted: bool,
-        last_vote_refresh_time: &mut LastVoteRefreshTime,
-        voting_sender: &Sender<VoteOp>,
-        wait_to_vote_slot: Option<Slot>,
-    ) -> bool {
-        let Some(heaviest_bank_on_same_fork) = heaviest_bank_on_same_fork.as_ref() else {
-            // Only refresh if blocks have been built on our last vote
-            return false;
-        };
-        let Some(latest_landed_vote_slot) =
-            progress.my_latest_landed_vote(heaviest_bank_on_same_fork.slot())
-        else {
-            // Need to land at least one vote in order to refresh
-            return false;
-        };
-        let Some(last_voted_slot) = tower.last_voted_slot() else {
-            // Need to have voted in order to refresh
-            return false;
-        };
+    // Suspended refresh_last_vote logic
+    // fn maybe_refresh_last_vote
+    // fn refresh_last_vote
 
-        // If our last landed vote on this fork is greater than the vote recorded in our tower
-        // this means that our tower is old AND on chain adoption has failed. Warn the operator
-        // as they could be submitting slashable votes.
-        if latest_landed_vote_slot > last_voted_slot
-            && last_vote_refresh_time.last_print_time.elapsed().as_secs() >= 1
-        {
-            last_vote_refresh_time.last_print_time = Instant::now();
-            warn!(
-                "Last landed vote for slot {} in bank {} is greater than the current last vote \
-                 for slot: {} tracked by tower. This indicates a bug in the on chain adoption logic",
-                latest_landed_vote_slot,
-                heaviest_bank_on_same_fork.slot(),
-                last_voted_slot
-            );
-            datapoint_error!(
-                "adoption_failure",
-                ("latest_landed_vote_slot", latest_landed_vote_slot, i64),
-                (
-                    "heaviest_bank_on_fork",
-                    heaviest_bank_on_same_fork.slot(),
-                    i64
-                ),
-                ("last_voted_slot", last_voted_slot, i64)
-            );
-        }
-
-        if latest_landed_vote_slot >= last_voted_slot {
-            // Our vote or a subsequent vote landed do not refresh
-            return false;
-        }
-
-        // If we are a non voting validator or have an incorrect setup preventing us from
-        // generating vote txs, no need to refresh
-        let last_vote_tx_blockhash = match tower.last_vote_tx_blockhash() {
-            // Since the checks in vote generation are deterministic, if we were non voting or hot spare
-            // on the original vote, the refresh will also fail. No reason to refresh.
-            // On the fly adjustments via the cli will be picked up for the next vote.
-            BlockhashStatus::NonVoting | BlockhashStatus::HotSpare => return false,
-            // In this case we have not voted since restart, our setup is unclear.
-            // We have a vote from our previous restart that is eligble for refresh, we must refresh.
-            BlockhashStatus::Uninitialized => None,
-            BlockhashStatus::Blockhash(blockhash) => Some(blockhash),
-        };
-
-        if last_vote_tx_blockhash.is_some()
-            && heaviest_bank_on_same_fork
-                .is_hash_valid_for_age(&last_vote_tx_blockhash.unwrap(), REFRESH_VOTE_BLOCKHEIGHT)
-        {
-            // Check the blockhash queue to see if enough blocks have been built on our last voted fork
-            return false;
-        }
-
-        if last_vote_refresh_time
-            .last_refresh_time
-            .elapsed()
-            .as_millis()
-            < MAX_VOTE_REFRESH_INTERVAL_MILLIS as u128
-        {
-            // This avoids duplicate refresh in case there are multiple forks descending from our last voted fork
-            // It also ensures that if the first refresh fails we will continue attempting to refresh at an interval no less
-            // than MAX_VOTE_REFRESH_INTERVAL_MILLIS
-            return false;
-        }
-
-        // All criteria are met, refresh the last vote using the blockhash of `heaviest_bank_on_same_fork`
-        Self::refresh_last_vote(
-            tower,
-            heaviest_bank_on_same_fork,
-            last_voted_slot,
-            vote_account_pubkey,
-            identity_keypair,
-            authorized_voter_keypairs,
-            vote_signatures,
-            has_new_vote_been_rooted,
-            last_vote_refresh_time,
-            voting_sender,
-            wait_to_vote_slot,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn refresh_last_vote(
-        tower: &mut Tower,
-        heaviest_bank_on_same_fork: &Bank,
-        last_voted_slot: Slot,
-        vote_account_pubkey: &Pubkey,
-        identity_keypair: &Keypair,
-        authorized_voter_keypairs: &[Arc<Keypair>],
-        vote_signatures: &mut Vec<Signature>,
-        has_new_vote_been_rooted: bool,
-        last_vote_refresh_time: &mut LastVoteRefreshTime,
-        voting_sender: &Sender<VoteOp>,
-        wait_to_vote_slot: Option<Slot>,
-    ) -> bool {
-        // Update timestamp for refreshed vote
-        tower.refresh_last_vote_timestamp(heaviest_bank_on_same_fork.slot());
-
-        let vote_tx_result = Self::generate_vote_tx(
-            identity_keypair,
-            heaviest_bank_on_same_fork,
-            vote_account_pubkey,
-            authorized_voter_keypairs,
-            tower.last_vote(),
-            &SwitchForkDecision::SameFork,
-            vote_signatures,
-            has_new_vote_been_rooted,
-            wait_to_vote_slot,
-        );
-
-        if let GenerateVoteTxResult::Tx(vote_tx) = vote_tx_result {
-            let recent_blockhash = vote_tx.message.recent_blockhash;
-            tower.refresh_last_vote_tx_blockhash(recent_blockhash);
-
-            // Send the votes to the TPU and gossip for network propagation
-            let hash_string = format!("{recent_blockhash}");
-            datapoint_info!(
-                "refresh_vote",
-                ("last_voted_slot", last_voted_slot, i64),
-                ("target_bank_slot", heaviest_bank_on_same_fork.slot(), i64),
-                ("target_bank_hash", hash_string, String),
-            );
-            voting_sender
-                .send(VoteOp::RefreshVote {
-                    tx: vote_tx,
-                    last_voted_slot,
-                })
-                .unwrap_or_else(|err| warn!("Error: {:?}", err));
-            last_vote_refresh_time.last_refresh_time = Instant::now();
-            true
-        } else if vote_tx_result.is_non_voting() {
-            tower.mark_last_vote_tx_blockhash_non_voting();
-            false
-        } else if vote_tx_result.is_hot_spare() {
-            tower.mark_last_vote_tx_blockhash_hot_spare();
-            false
-        } else {
-            false
-        }
-    }
 
     #[allow(clippy::too_many_arguments)]
     fn push_vote(
@@ -3039,8 +2879,13 @@ impl ReplayStage {
         vote_signatures: &mut Vec<Signature>,
         has_new_vote_been_rooted: bool,
         replay_timing: &mut ReplayLoopTiming,
-        voting_sender: &Sender<VoteOp>,
+        voting_sender: &Sender<VoteOpWithAncestors>,
         wait_to_vote_slot: Option<Slot>,
+        bank_ancestors: &HashSet<Slot>,
+        leader_schedule_cache: &LeaderScheduleCache,
+        hsv_identity_keypair: &Option<Arc<Keypair>>,
+        hsv_vote_account: &Option<Arc<Pubkey>>,
+        hsv_send_to: &Option<Arc<String>>
     ) {
         let mut generate_time = Measure::start("generate_vote");
         let vote_tx_result = Self::generate_vote_tx(
@@ -3056,6 +2901,9 @@ impl ReplayStage {
         );
         generate_time.stop();
         replay_timing.generate_vote_us += generate_time.as_us();
+        let tower_last_vote_for_this_round = tower.last_vote();
+
+        let current_tower_slots_after_primary = tower.tower_slots();
         if let GenerateVoteTxResult::Tx(vote_tx) = vote_tx_result {
             tower.refresh_last_vote_tx_blockhash(vote_tx.message.recent_blockhash);
 
@@ -3065,15 +2913,87 @@ impl ReplayStage {
             });
 
             let tower_slots = tower.tower_slots();
-            voting_sender
-                .send(VoteOp::PushVote {
+            let vote_op_with_ancestors = VoteOpWithAncestors {
+                vote_op: VoteOp::PushVote {
                     tx: vote_tx,
                     tower_slots,
-                    saved_tower: SavedTowerVersions::from(saved_tower),
-                })
+                    saved_tower: Some(SavedTowerVersions::from(saved_tower)),
+                },
+                ancestors: bank_ancestors.clone(),
+            };
+            voting_sender
+                .send(vote_op_with_ancestors)
                 .unwrap_or_else(|err| warn!("Error: {:?}", err));
         } else if vote_tx_result.is_non_voting() {
             tower.mark_last_vote_tx_blockhash_non_voting();
+        }
+
+        match hsv_send_to {
+            Some(send_to) => {
+                if let (Some(boost_validator_keypair), Some(boost_vote_pubkey)) = (hsv_identity_keypair, hsv_vote_account) {
+                    let current_slot = bank.slot();
+                    let is_booster_leader = leader_schedule_cache
+                        .slot_leader_at(current_slot, Some(bank))
+                        .map_or(false, |leader_pubkey| leader_pubkey == boost_validator_keypair.pubkey());
+
+                    if !is_booster_leader {
+                        let mock_vote_signatures: &mut Vec<Signature> = &mut vec!();
+
+                        let boost_authorized_voter_keypairs= &[boost_validator_keypair.clone()];
+                        let boost_vote_tx_result = Self::generate_vote_tx(
+                            boost_validator_keypair,
+                            bank,
+                            &boost_vote_pubkey,
+                            boost_authorized_voter_keypairs,
+                            tower_last_vote_for_this_round,
+                            switch_fork_decision,
+                            mock_vote_signatures,
+                            has_new_vote_been_rooted,
+                            wait_to_vote_slot,
+                        );
+
+                        if let GenerateVoteTxResult::Tx(boost_vote_tx) = boost_vote_tx_result {
+                            let vote_op_with_ancestors = VoteOpWithAncestors {
+                                vote_op: VoteOp::PushVote {
+                                    tx: boost_vote_tx,
+                                    tower_slots: current_tower_slots_after_primary,
+                                    saved_tower: None,
+                                },
+                                ancestors: bank_ancestors.clone(),
+                            };
+
+                            vote_op_with_ancestors
+                                .serialize()
+                                .map(|vote_serialized: Vec<u8>| {
+                                    match SEND_SOCKET.send_to(vote_serialized.as_ref(), send_to.as_ref()) {
+                                        Ok(_) => { /* Successfully sent */ }
+                                        Err(e) => {
+                                            error!("hot_spare_vote: Failed to send vote boost to {:?}: {}", send_to, e);
+                                        }
+                                    }
+                                })
+                                .unwrap_or_else(|e| error!("hot_spare_vote: Could not serialize VoteOpWithAncestors ({})", e));
+                            info!("hot_spare_vote: Sent boost vote for slot = {} for node {} with vote {}", &bank.slot(), boost_validator_keypair.pubkey(), boost_vote_pubkey);
+                        } else if boost_vote_tx_result.is_non_voting() {
+                            warn!(
+                                "hot_spare_vote: Boost vote for vote_account {:?} (identity {:?}) resulted in non-voting.",
+                                boost_vote_pubkey, boost_validator_keypair.pubkey()
+                            );
+                        } else {
+                            warn!(
+                                "hot_spare_vote: Failed to generate boost vote transaction for vote_account {:?} (identity {:?}).",
+                                boost_vote_pubkey, boost_validator_keypair.pubkey()
+                            );
+                        }
+                    } else {
+                        info!(
+                        "hot_spare_vote: Validator {} is the leader for slot {}. Skipping boost vote.",
+                        boost_validator_keypair.pubkey(), current_slot
+                    );
+                    }
+                }
+            },
+            None    => {/* Not sending any hsv votes */},
         }
     }
 

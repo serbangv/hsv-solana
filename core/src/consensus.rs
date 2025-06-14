@@ -212,8 +212,9 @@ pub(crate) enum BlockhashStatus {
     Uninitialized,
     /// Non voting validator
     NonVoting,
-    /// Hot spare validator
-    HotSpare,
+    // Suspended refresh_last_vote logic
+    // / Hot spare validator
+    // HotSpare,
     /// Successfully generated vote tx with blockhash
     Blockhash(Hash),
 }
@@ -600,9 +601,10 @@ impl Tower {
         self.vote_state.tower()
     }
 
-    pub(crate) fn last_vote_tx_blockhash(&self) -> BlockhashStatus {
-        self.last_vote_tx_blockhash
-    }
+    // Suspended refresh_last_vote logic
+    // pub(crate) fn last_vote_tx_blockhash(&self) -> BlockhashStatus {
+    //     self.last_vote_tx_blockhash
+    // }
 
     pub fn refresh_last_vote_timestamp(&mut self, heaviest_slot_on_same_fork: Slot) {
         let timestamp = if let Some(last_vote_timestamp) = self.last_vote.timestamp() {
@@ -651,9 +653,10 @@ impl Tower {
         self.last_vote_tx_blockhash = BlockhashStatus::NonVoting;
     }
 
-    pub(crate) fn mark_last_vote_tx_blockhash_hot_spare(&mut self) {
-        self.last_vote_tx_blockhash = BlockhashStatus::HotSpare;
-    }
+    // Suspended refresh_last_vote logic
+    // pub(crate) fn mark_last_vote_tx_blockhash_hot_spare(&mut self) {
+    //     self.last_vote_tx_blockhash = BlockhashStatus::HotSpare;
+    // }
 
     pub fn last_voted_slot_in_bank(bank: &Bank, vote_account_pubkey: &Pubkey) -> Option<Slot> {
         let vote_account = bank.get_vote_account(vote_account_pubkey)?;
@@ -1871,7 +1874,7 @@ impl Tower {
 
     // Updating root is needed to correctly restore from newly-saved tower for the next
     // boot
-    fn initialize_root(&mut self, root: Slot) {
+    pub(crate) fn initialize_root(&mut self, root: Slot) {
         self.vote_state.root_slot = Some(root);
     }
 

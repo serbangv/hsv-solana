@@ -356,6 +356,10 @@ impl LocalCluster {
             ValidatorTpuConfig::new_for_tests(true),
             Arc::new(RwLock::new(None)),
             None,
+            None,
+            None,
+            None,
+            None,
         )
         .expect("assume successful validator start");
 
@@ -565,6 +569,10 @@ impl LocalCluster {
             socket_addr_space,
             ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
+            None,
+            None,
+            None,
+            None,
             None,
         )
         .expect("assume successful validator start");
@@ -1092,6 +1100,10 @@ impl Cluster for LocalCluster {
             socket_addr_space,
             ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
+            None,
+            None,
+            None,
+            None,
             None,
         )
         .expect("assume successful validator start");

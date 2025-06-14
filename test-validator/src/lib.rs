@@ -609,7 +609,7 @@ impl TestValidatorGenesis {
         mint_address: Pubkey,
         socket_addr_space: SocketAddrSpace,
     ) -> Result<TestValidator, Box<dyn std::error::Error>> {
-        self.start_with_mint_address_and_geyser_plugin_rpc(mint_address, socket_addr_space, None)
+        self.start_with_mint_address_and_geyser_plugin_rpc(mint_address, socket_addr_space, None, None, None, None, None)
     }
 
     /// Start a test validator with the address of the mint account that will receive tokens
@@ -621,12 +621,20 @@ impl TestValidatorGenesis {
         mint_address: Pubkey,
         socket_addr_space: SocketAddrSpace,
         rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
+        hsv_identity_keypair: Option<Arc<Keypair>>,
+        hsv_vote_account: Option<Arc<Pubkey>>,
+        hsv_send_to: Option<Arc<String>>,
+        hsv_port: Option<u16>,
     ) -> Result<TestValidator, Box<dyn std::error::Error>> {
         TestValidator::start(
             mint_address,
             self,
             socket_addr_space,
             rpc_to_plugin_manager_receiver,
+            hsv_identity_keypair,
+            hsv_vote_account,
+            hsv_send_to,
+            hsv_port
         )
         .inspect(|test_validator| {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -676,7 +684,7 @@ impl TestValidatorGenesis {
         socket_addr_space: SocketAddrSpace,
     ) -> (TestValidator, Keypair) {
         let mint_keypair = Keypair::new();
-        match TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space, None) {
+        match TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space, None, None, None, None, None) {
             Ok(test_validator) => {
                 test_validator.wait_for_nonzero_fees().await;
                 (test_validator, mint_keypair)
@@ -935,6 +943,10 @@ impl TestValidator {
         config: &TestValidatorGenesis,
         socket_addr_space: SocketAddrSpace,
         rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
+        hsv_identity_keypair: Option<Arc<Keypair>>,
+        hsv_vote_account: Option<Arc<Pubkey>>,
+        hsv_send_to: Option<Arc<String>>,
+        hsv_port: Option<u16>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let preserve_ledger = config.ledger_path.is_some();
         let ledger_path = TestValidator::initialize_ledger(mint_address, config)?;
@@ -1053,6 +1065,10 @@ impl TestValidator {
             ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
             config.admin_rpc_service_post_init.clone(),
             None,
+            hsv_identity_keypair,
+            hsv_vote_account,
+            hsv_send_to,
+            hsv_port
         )?);
 
         // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of

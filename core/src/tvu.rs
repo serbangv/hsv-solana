@@ -162,6 +162,10 @@ impl Tvu {
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         shred_receiver_addr: Arc<RwLock<Option<SocketAddr>>>,
+        hsv_identity_keypair: Option<Arc<Keypair>>,
+        hsv_vote_account: Option<Arc<Pubkey>>,
+        hsv_send_to: Option<Arc<String>>,
+        hsv_port: Option<u16>
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
@@ -324,6 +328,9 @@ impl Tvu {
             log_messages_bytes_limit,
             prioritization_fee_cache: prioritization_fee_cache.clone(),
             banking_tracer,
+            hsv_identity_keypair,
+            hsv_vote_account,
+            hsv_send_to
         };
 
         let voting_service = VotingService::new(
@@ -332,6 +339,8 @@ impl Tvu {
             poh_recorder.clone(),
             tower_storage,
             vote_connection_cache.clone(),
+            hsv_port,
+            *vote_account,
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(
@@ -586,6 +595,7 @@ pub mod tests {
             None,
             Arc::new(connection_cache),
             Arc::new(RwLock::new(None)),
+            None
         )
         .expect("assume success");
         if enable_wen_restart {
